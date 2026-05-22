@@ -1,6 +1,9 @@
 import serial
 import serial.tools.list_ports
 import signal
+import threading
+import time
+import matplotlib.pyplot as plt
 
 """
 Exemple de trame :
@@ -75,6 +78,8 @@ def parse_rmc(fields): # navigation
         "date": fields[9],
     }
 
+global buffer_sats
+buffer_sats = []
 def parse_gsv(fields): # GSV = satellite visible
     sats = []
 
@@ -94,9 +99,17 @@ def parse_gsv(fields): # GSV = satellite visible
         except IndexError:
             break
 
-    return sats
+    if fields[1] > fields[2]:
+        buffer_sats += sats
+        return []
+    res = buffer_sats + sats
+    buffer_sats = []
+    return res
 
 def process_nmea(sentence):
+    if not sentence:
+        return None
+    
     valid, calc, recv = verify_checksum(sentence)
 
     print("=" * 70)
@@ -104,7 +117,7 @@ def process_nmea(sentence):
 
     if not valid:
         print(f"[ERREUR] Checksum invalide ({recv} != {calc})")
-        return
+        return None
 
     print(f"[OK] Checksum valide : {recv}")
 
@@ -113,43 +126,29 @@ def process_nmea(sentence):
     fields = body.split(",")
 
     msg_type = fields[0][-3:]
+    
+    data = None
+    
+    match msg_type:
+        case "GGA":
+            data = parse_gga(fields)
+        case "RMC":
+            data = parse_rmc(fields)
+        case "GSV":
+            data = parse_gsv(fields)
+        case _:
+            print(f"Type de trame non géré : {msg_type}")
+    
+    return msg_type, data
 
-    if msg_type == "GGA":
-
-        data = parse_gga(fields)
-
-        print("Position récepteur :")
-        print(f"  Latitude  : {data['latitude']}")
-        print(f"  Longitude : {data['longitude']}")
-        print(f"  Altitude  : {data['altitude_m']} m")
-        print(f"  Satellites utilisés : {data['satellites_used']}")
-
-    elif msg_type == "RMC":
-
-        data = parse_rmc(fields)
-
-        print("Navigation :")
-        print(f"  Latitude  : {data['latitude']}")
-        print(f"  Longitude : {data['longitude']}")
-        print(f"  Vitesse   : {data['speed_knots']} noeuds")
-        print(f"  Date      : {data['date']}")
-
-    elif msg_type == "GSV":
-
-        sats = parse_gsv(fields)
-
-        print("Satellites visibles :")
-
-        for sat in sats:
-            print(
-                f"  PRN={sat['prn']}  "
-                f"Elev={sat['elevation']}°  "
-                f"Azimut={sat['azimuth']}°  "
-                f"SNR={sat['snr']}"
-            )
-
-    else:
-        print(f"Type de trame non géré : {msg_type}")
+def read_nmea(ser):
+    while not ser.in_waiting > 0:
+        try:
+            bytes = ser.readline()
+            return bytes.decode('ascii')
+        except:
+            continue
+    return ''
 
 if __name__ == '__main__':
     ports = serial.tools.list_ports.comports()
@@ -162,11 +161,54 @@ if __name__ == '__main__':
         ser = serial.Serial(ports[0][0], 4800, timeout=1)
     print(f"Connected to {ser.name}")
     # Read everything currently in the buffer
+    
+    
+    positions = []
+    sats = {}
+    
+    fig, ax = plt.subplots()
+    
     while True:
-        if ser.in_waiting > 0:
-            try:
-                bytes = ser.readline()
-                process_nmea(bytes.decode('ascii'))
-            except:
-                continue
+        res = process_nmea(read_nmea(ser))
+        if not res:
+            continue
+        print('\n\n',res)
+        msg_type, data = res
+        
+        match msg_type:
+            case 'GGA':
+                positions.append(data)
+            case 'GSV':
+                if data:
+                    timestamp = time.time()
+                    sats_in_view = []
+                    for sat in data:
+                        snr = data['snr']
+                        sats_in_view.append(snr)
+                        if snr in sats:
+                            sats[snr]['visible'].append(True)
+                            sats[snr]['timestamp'].append(timestamp)
+                            sats[snr]['elevation'].append(sat['elevation'])
+                            sats[snr]['azimuth'].append(sat['azimuth'])
+                        else:
+                            sats[snr] = {
+                                'visible': [True],
+                                'timestamps': [timestamp],
+                                'elevation': [sat['elevation']],
+                                'azimuth': [sat['azimuth']],
+                            }
+                    for snr, sat in sats.items():
+                        if snr not in sats_in_view:
+                            sat['visible'].append(False)
+                            sats[snr]['timestamp'].append(timestamp)
+                            sats[snr]['elevation'].append(None)
+                            sats[snr]['azimuth'].append(None)
+            case _:
+                ...
+
+        print(sats)
+    
+    
+    
+            
     
