@@ -1,214 +1,199 @@
-import serial
-import serial.tools.list_ports
+from os import _exit
 import signal
-import threading
-import time
+from queue import Queue
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
+from time import sleep
+from math import cos
 
-"""
-Exemple de trame :
-$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
-"""
+from reader import Reader
+from parser import Parser
+
+def kill(sig, frame):
+    _exit(1)
+
+signal.signal(signal.SIGINT, kill)
 
 
-def stop():
-    exit()
-signal.signal(signal.SIGINT, stop)
+import math
+from matplotlib.axes import Axes
 
-def verify_checksum(sentence):
-    sentence = sentence.strip()
+def plot_position(ax: Axes, positions: list):
+    if not positions:
+        return
 
-    if not sentence.startswith("$") or "*" not in sentence:
-        return False, None, None
-
-    data, received_checksum = sentence[1:].split("*")
-
-    checksum = 0
-    for c in data:
-        checksum ^= ord(c)
-
-    calculated = f"{checksum:02X}"
-    received = received_checksum.upper()
-
-    return calculated == received, calculated, received
-
-def nmea_to_decimal(value, direction):
-    if not value:
-        return None
-
-    raw = float(value)
-
-    degrees = int(raw / 100)
-    minutes = raw - (degrees * 100)
-
-    decimal = degrees + minutes / 60
-
-    if direction in ("S", "W"):
-        decimal *= -1
-
-    return decimal
-
-### On fait une fonction par type de trame
-def parse_gga(fields): # position brute
-    lat = nmea_to_decimal(fields[2], fields[3])
-    lon = nmea_to_decimal(fields[4], fields[5])
-
-    return {
-        "type": "GGA",
-        "time": fields[1],
-        "latitude": lat,
-        "longitude": lon,
-        "fix_quality": fields[6],
-        "satellites_used": fields[7],
-        "altitude_m": fields[9],
-    }
-
-def parse_rmc(fields): # navigation
-    lat = nmea_to_decimal(fields[3], fields[4])
-    lon = nmea_to_decimal(fields[5], fields[6])
-
-    return {
-        "type": "RMC",
-        "time": fields[1],
-        "status": fields[2],
-        "latitude": lat,
-        "longitude": lon,
-        "speed_knots": fields[7],
-        "course_deg": fields[8],
-        "date": fields[9],
-    }
-
-global buffer_sats
-buffer_sats = []
-def parse_gsv(fields): # GSV = satellite visible
-    sats = []
-
-    # Les satellites commencent à l'index 4 et occupent 4 champs
-    for i in range(4, len(fields) - 3, 4):
-
-        try:
-            sat = {
-                "prn": fields[i],
-                "elevation": fields[i + 1],
-                "azimuth": fields[i + 2],
-                "snr": fields[i + 3],
-            }
-
-            sats.append(sat)
-
-        except IndexError:
-            break
-
-    if fields[1] > fields[2]:
-        buffer_sats += sats
-        return []
-    res = buffer_sats + sats
-    buffer_sats = []
-    return res
-
-def process_nmea(sentence):
-    if not sentence:
-        return None
-    
-    valid, calc, recv = verify_checksum(sentence)
-
-    print("=" * 70)
-    print(sentence.strip())
-
-    if not valid:
-        print(f"[ERREUR] Checksum invalide ({recv} != {calc})")
-        return None
-
-    print(f"[OK] Checksum valide : {recv}")
-
-    # Supprime $ et checksum
-    body = sentence[1:sentence.find("*")]
-    fields = body.split(",")
-
-    msg_type = fields[0][-3:]
-    
-    data = None
-    
-    match msg_type:
-        case "GGA":
-            data = parse_gga(fields)
-        case "RMC":
-            data = parse_rmc(fields)
-        case "GSV":
-            data = parse_gsv(fields)
-        case _:
-            print(f"Type de trame non géré : {msg_type}")
-    
-    return msg_type, data
-
-def read_nmea(ser):
-    while not ser.in_waiting > 0:
-        try:
-            bytes = ser.readline()
-            return bytes.decode('ascii')
-        except:
-            continue
-    return ''
-
-if __name__ == '__main__':
-    ports = serial.tools.list_ports.comports()
-    if not len(ports):
-        print('Aucun COM connecté.')
-        exit(1)
-    elif len(ports) > 1:
-        ser = serial.Serial(input('Port : '), 4800, timeout=1)
-    else:
-        ser = serial.Serial(ports[0][0], 4800, timeout=1)
-    print(f"Connected to {ser.name}")
-    # Read everything currently in the buffer
-    
-    
-    positions = []
-    sats = {}
-    
-    fig, ax = plt.subplots()
-    
-    while True:
-        res = process_nmea(read_nmea(ser))
-        if not res:
-            continue
-        print('\n\n',res)
-        msg_type, data = res
+    # 1. INITIALISATION
+    if not hasattr(ax, "_init"):
+        ax._init = True
+        ax._processed = 0
+        ax._x = []
+        ax._y = []
         
-        match msg_type:
-            case 'GGA':
-                positions.append(data)
-            case 'GSV':
-                if data:
-                    timestamp = time.time()
-                    sats_in_view = []
-                    for sat in data:
-                        snr = data['snr']
-                        sats_in_view.append(snr)
-                        if snr in sats:
-                            sats[snr]['visible'].append(True)
-                            sats[snr]['timestamp'].append(timestamp)
-                            sats[snr]['elevation'].append(sat['elevation'])
-                            sats[snr]['azimuth'].append(sat['azimuth'])
-                        else:
-                            sats[snr] = {
-                                'visible': [True],
-                                'timestamps': [timestamp],
-                                'elevation': [sat['elevation']],
-                                'azimuth': [sat['azimuth']],
-                            }
-                    for snr, sat in sats.items():
-                        if snr not in sats_in_view:
-                            sat['visible'].append(False)
-                            sats[snr]['timestamp'].append(timestamp)
-                            sats[snr]['elevation'].append(None)
-                            sats[snr]['azimuth'].append(None)
-            case _:
-                ...
+        ax._lat0 = None
+        ax._lon0 = None
+        
+        ax.set_title("Trajectoire GPS (Repère métrique local)")
+        ax.set_xlabel("X (mètres)")
+        ax.set_ylabel("Y (mètres)")
+        ax.set_aspect('equal', adjustable='box')
+        ax.grid()
+        ax._line, = ax.plot([], [], 'ro', markersize=2)
 
-        print(sats)
+    new_points = positions[ax._processed:]
+    if not new_points:
+        return
+
+    if ax._lat0 is None:
+        ax._lat0 = new_points[0].lat
+        ax._lon0 = new_points[0].lon
+
+    R = 6371000.0
+    rad = math.pi / 180.0
     
+
+    cos_lat0 = math.cos(ax._lat0 * rad)
+
+    # On prends les points relatifs à l'origine (point initial)
+    for p in new_points:
+        dx = (p.lon - ax._lon0) * rad * R * cos_lat0
+        dy = (p.lat - ax._lat0) * rad * R
+        
+        ax._x.append(dx)
+        ax._y.append(dy)
+
+    ax._line.set_data(ax._x, ax._y)
+    ax.relim()
+    ax.autoscale_view()
     
-    
+    ax._processed = len(positions)
+
+
+def plot_sat_histogramme(ax: Axes, sats: dict):
+    timestamps = sats.get("timestamps", [])
+    visibles = sats.get("visibles", [])
+
+    if not timestamps:
+        return
+
+    if not hasattr(ax, "_init"):
+        ax._init = True
+        ax._processed = 0
+        ax._timestamps = {}
+        ax._lines = {}
+        
+        ax.set_title("Visibilité satellites")
+        ax.set_xlabel("Temps")
+        ax.set_ylabel("Satellite ID")
+        ax.grid()
+
+    new_timestamps = timestamps[ax._processed:]
+    new_visibles = visibles[ax._processed:]
+
+    if not new_timestamps:
+        return
+
+    satellites_mis_a_jour = set()
+
+    for t, sat_list in zip(new_timestamps, new_visibles):
+        for sat_id in sat_list:
+            if sat_id not in ax._timestamps:
+                ax._timestamps[sat_id] = []
+                ax._lines[sat_id], = ax.plot([], [], 'go', markersize=3)
             
-    
+            ax._timestamps[sat_id].append(t)
+            satellites_mis_a_jour.add(sat_id)
+
+    sorted_ids = sorted(list(ax._timestamps.keys()))
+    y_ticks = {sat_id: i for i, sat_id in enumerate(sorted_ids)}
+
+    for sat_id in satellites_mis_a_jour:
+        temps_sat = ax._timestamps[sat_id]
+        
+        index_y = y_ticks[sat_id]
+        ordonnees_y = [index_y] * len(temps_sat)
+        
+        ax._lines[sat_id].set_data(temps_sat, ordonnees_y)
+
+    if satellites_mis_a_jour:
+        ax.relim()
+        ax.autoscale_view()  
+        ax.set_yticks(range(len(sorted_ids)))
+        ax.set_yticklabels([str(sat_id) for sat_id in sorted_ids])
+
+    ax._processed = len(timestamps)
+
+
+def plot_sat_geoide(ax, sats):
+    data = sats.get("data", {})
+    if not data:
+        return
+
+    if not hasattr(ax, "_init"):
+        ax._init = True
+        ax._azimuths = {}
+        ax._elevations = {}
+        ax._lines = {}
+        ax.set_title("Skyplot satellites")
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+        ax.set_rlim(90, 0)
+
+    has_new_data = False
+    has_new_satellite = False
+
+    for sat_id, measurements in data.items():
+        if sat_id not in ax._azimuths:
+            ax._azimuths[sat_id] = []
+            ax._elevations[sat_id] = []
+            # On crée l'unique ligne dédiée à CE satellite lors de sa première apparition
+            ax._lines[sat_id], = ax.plot([], [], 'o', markersize=3, label=f"SAT {sat_id}")
+            has_new_satellite = True
+
+        existing = len(ax._azimuths[sat_id])
+
+        new_points = measurements[existing:]
+
+        if new_points:
+            has_new_data = True
+            new_az = [s.azimuth * 3.1415926535 / 180.0 for s in new_points]
+            new_el = [90 - s.elevation for s in new_points]
+            
+            ax._azimuths[sat_id].extend(new_az)
+            ax._elevations[sat_id].extend(new_el)
+            
+            ax._lines[sat_id].set_data(ax._azimuths[sat_id], ax._elevations[sat_id])
+
+    if has_new_data:
+        ax.relim()
+        ax.autoscale_view()
+        
+        if has_new_satellite:
+            ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
+
+
+if __name__ == "__main__":
+    trames = Queue()
+
+    reader = Reader(trames)
+    parser = Parser(trames)
+    reader.worker.start()
+    parser.worker.start()
+
+    plt.ion()
+
+    fig = plt.figure(figsize=(15, 5))
+    ax1 = fig.add_subplot(131)
+    ax2 = fig.add_subplot(132)
+    ax3 = fig.add_subplot(133, projection="polar")
+
+    plt.show()
+
+    while True:
+        plot_position(ax1, parser.positions)
+        plot_sat_histogramme(ax2, parser.satellites)
+        plot_sat_geoide(ax3, parser.satellites)
+        
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
+        
+        sleep(0.1)
