@@ -24,7 +24,6 @@ class Reader():
     def job(self):
         while True:
             self.readline_serial()
-            sleep(0.01)
 
     def readline_serial(self):
         try:
