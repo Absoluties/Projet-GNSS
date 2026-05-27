@@ -4,7 +4,7 @@ from queue import Queue
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from time import sleep
-from math import cos
+from datetime import datetime
 
 from reader import Reader
 from parser import Parser
@@ -69,7 +69,7 @@ def plot_position(ax: Axes, positions: list):
 
 
 def plot_sat_histogramme(ax: Axes, sats: dict):
-    timestamps = sats.get("timestamps", [])
+    timestamps:list[datetime] = sats.get("timestamps", [])
     visibles = sats.get("visibles", [])
 
     if not timestamps:
@@ -83,10 +83,10 @@ def plot_sat_histogramme(ax: Axes, sats: dict):
         
         ax.set_title("Visibilité satellites")
         ax.set_xlabel("Temps")
-        ax.set_ylabel("Satellite ID")
+        ax.set_ylabel("PRN")
         ax.grid()
 
-    new_timestamps = timestamps[ax._processed:]
+    new_timestamps:list[datetime] = timestamps[ax._processed:]
     new_visibles = visibles[ax._processed:]
 
     if not new_timestamps:
@@ -107,18 +107,19 @@ def plot_sat_histogramme(ax: Axes, sats: dict):
     y_ticks = {sat_id: i for i, sat_id in enumerate(sorted_ids)}
 
     for sat_id in satellites_mis_a_jour:
-        temps_sat = ax._timestamps[sat_id]
-        
+        t = ax._timestamps[sat_id]
+                
         index_y = y_ticks[sat_id]
-        ordonnees_y = [index_y] * len(temps_sat)
+        ordonnees_y = [index_y] * len(t)
         
-        ax._lines[sat_id].set_data(temps_sat, ordonnees_y)
+        ax._lines[sat_id].set_data(t, ordonnees_y)
 
     if satellites_mis_a_jour:
         ax.relim()
         ax.autoscale_view()  
         ax.set_yticks(range(len(sorted_ids)))
         ax.set_yticklabels([str(sat_id) for sat_id in sorted_ids])
+        ax.set_xticks(timestamps, [f'{t.hour}:{t.minute:02d}' for t in timestamps], rotation='vertical')
 
     ax._processed = len(timestamps)
 
@@ -156,7 +157,7 @@ def plot_sat_geoide(ax, sats):
         if new_points:
             has_new_data = True
             new_az = [s.azimuth * 3.1415926535 / 180.0 for s in new_points]
-            new_el = [90 - s.elevation for s in new_points]
+            new_el = [s.elevation for s in new_points]
             
             ax._azimuths[sat_id].extend(new_az)
             ax._elevations[sat_id].extend(new_el)
