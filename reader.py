@@ -12,10 +12,15 @@ class Reader():
             self.ser = None
             print('Aucun COM connecté...')
             sleep(3)
-        if len(ports) > 1:
-            self.ser = serial.Serial(input('Donnez le nom du port serial à utiliser : '), 4800, timeout=1)
-        else:
-            self.ser = serial.Serial(ports[0][0], 4800, timeout=1)
+        while True:
+            try:
+                if len(ports) > 1:
+                    self.ser = serial.Serial(input('Donnez le nom du port serial à utiliser : '), 4800, timeout=1)
+                else:
+                    self.ser = serial.Serial(ports[0][0], 4800, timeout=1)
+                    break
+            except:
+                ...
 
         if self.ser is not None:
             print(f"Connected to {self.ser.name}")
