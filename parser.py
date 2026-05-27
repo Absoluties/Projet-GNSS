@@ -80,8 +80,8 @@ class Parser:
     def parse_gsv(self, fields:list[str]): # GSV = satellite visible
         message_amount:int = int(fields[0])
         message_number:int = int(fields[1])
-        satellites_amount:int = int(fields[2])
-        n = satellites_amount % 4 if message_amount == message_number else 4
+        # satellites_amount:int = int(fields[2])
+        n = (len(fields) - 3) // 4
         for i in range(n):
             j = 3 + 4 * i
             self.gsv_buffer.append(
