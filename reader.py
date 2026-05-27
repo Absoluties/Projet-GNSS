@@ -19,8 +19,8 @@ class Reader():
                 else:
                     self.ser = serial.Serial(ports[0][0], 4800, timeout=1)
                     break
-            except:
-                ...
+            except Exception as e:
+                print(e)
 
         if self.ser is not None:
             print(f"Connected to {self.ser.name}")
