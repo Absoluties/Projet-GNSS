@@ -142,3 +142,5 @@ class Parser:
                 self.parse_gsv(fields[1:])
             case _:
                 print(f"Type de trame non géré : {type_trame}")
+
+
