@@ -2,12 +2,14 @@ from os import _exit
 import signal
 from queue import Queue
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.axes import Axes
 from time import sleep
 from datetime import datetime
 
-from reader import Reader
+from reader import SerialReader, TcpReader
 from parser import Parser
+from math import radians, cos, sin
 
 def kill(sig, frame):
     _exit(1)
@@ -17,6 +19,19 @@ signal.signal(signal.SIGINT, kill)
 
 import math
 from matplotlib.axes import Axes
+
+import serial
+import serial.tools.list_ports
+from queue import Queue
+from threading import Thread
+from time import sleep
+
+import socket
+from queue import Queue
+from threading import Thread
+
+import numpy as np
+
 
 def plot_position(ax: Axes, positions: list):
     if not positions:
@@ -33,8 +48,8 @@ def plot_position(ax: Axes, positions: list):
         ax._lon0 = None
         
         ax.set_title("Trajectoire GPS (Repère métrique local)")
-        ax.set_xlabel("X (mètres)")
-        ax.set_ylabel("Y (mètres)")
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
         ax.set_aspect('equal', adjustable='box')
         ax.grid()
         ax._line, = ax.plot([], [], 'ro', markersize=2)
@@ -48,15 +63,14 @@ def plot_position(ax: Axes, positions: list):
         ax._lon0 = new_points[0].lon
 
     R = 6371000.0
-    rad = math.pi / 180.0
     
+    psi0 = radians(16)    # Angle à prendre en orientant le téléphone "vers l'avant" au moment de l'acquisition des données
+    cos_lat0 = cos(radians(ax._lat0))
 
-    cos_lat0 = math.cos(ax._lat0 * rad)
-
-    # On prends les points relatifs à l'origine (point initial)
+    # On prend les points relatifs à l'origine (point initial)
     for p in new_points:
-        dx = (p.lon - ax._lon0) * rad * R * cos_lat0
-        dy = (p.lat - ax._lat0) * rad * R
+        dx = round(R * (cos(psi0) * cos_lat0 * radians(p.lon - ax._lon0) - sin(psi0) * radians(p.lat - ax._lat0)),2)
+        dy = round(R * (sin(psi0) * cos_lat0 * radians(p.lon - ax._lon0) + cos(psi0) * radians(p.lat - ax._lat0)),2)
         
         ax._x.append(dx)
         ax._y.append(dy)
@@ -119,7 +133,11 @@ def plot_sat_histogramme(ax: Axes, sats: dict):
         ax.autoscale_view()  
         ax.set_yticks(range(len(sorted_ids)))
         ax.set_yticklabels([str(sat_id) for sat_id in sorted_ids])
-        ax.set_xticks(timestamps, [f'{t.hour}:{t.minute:02d}' for t in timestamps], rotation='vertical')
+        locator = mdates.AutoDateLocator(maxticks=10)
+        ax.xaxis.set_major_locator(locator)
+        formatter = mdates.DateFormatter('%H:%M')
+        ax.xaxis.set_major_formatter(formatter)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
 
     ax._processed = len(timestamps)
 
@@ -175,9 +193,11 @@ def plot_sat_geoide(ax, sats):
 if __name__ == "__main__":
     trames = Queue()
 
-    reader = Reader(trames)
+    serial_reader = SerialReader(trames)
+    serial_reader.worker.start()
+    # tcp_reader = TcpReader(trames)
+    # tcp_reader.worker.start()
     parser = Parser(trames)
-    reader.worker.start()
     parser.worker.start()
 
     plt.ion()
