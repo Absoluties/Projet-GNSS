@@ -16,7 +16,6 @@ def kill(sig, frame):
 
 signal.signal(signal.SIGINT, kill)
 
-
 import math
 from matplotlib.axes import Axes
 
@@ -33,7 +32,100 @@ from threading import Thread
 import numpy as np
 
 
-def plot_position(ax: Axes, positions: list):
+
+
+def plot_position_3D(ax: Axes, positions: list):
+    if not positions:
+        return
+    
+    # 1. INITIALISATION
+    if not hasattr(ax, "_init"):
+        ax._init = True
+        ax._processed = 0
+        ax._x = []
+        ax._y = []
+        ax._z = []
+        
+        ax._lat0 = None
+        ax._lon0 = None
+        ax._alt0 = None
+        ax._distance_totale = 0.0
+        ax._denivele_positif = 0.0
+        ax._denivele_negatif = 0.0
+        
+        ax._scatter = None
+        
+        ax.set_title("Trajectoire GPS 3D")
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+        ax.set_zlabel("Z (m)")
+        ax.set_aspect('equal', adjustable='box')
+        ax.grid()
+        ax.legend()
+          
+    new_points = positions[ax._processed:]
+    if not new_points:
+        return
+
+    if ax._lat0 is None:
+        ax._lat0 = new_points[0].lat
+        ax._lon0 = new_points[0].lon
+        ax._alt0 = new_points[0].altitude if new_points[0].altitude is not None else 0.0
+        
+
+    R = 6371000.0
+    
+    psi0 = radians(16)    # Angle à prendre en orientant le téléphone "vers l'avant" au moment de l'acquisition des données
+    cos_lat0 = cos(radians(ax._lat0))
+
+    # On prend les points relatifs à l'origine (point initial)
+    for p in new_points:
+        dx = round(R * (cos(psi0) * cos_lat0 * radians(p.lon - ax._lon0) - sin(psi0) * radians(p.lat - ax._lat0)),2)
+        dy = round(R * (sin(psi0) * cos_lat0 * radians(p.lon - ax._lon0) + cos(psi0) * radians(p.lat - ax._lat0)),2)
+        
+        alt_actuelle = p.altitude if p.altitude is not None else ax._alt0
+        dz = round(alt_actuelle - ax._alt0, 2)
+        
+        if len(ax._x) > 0:
+            prev_x = ax._x[-1]
+            prev_y = ax._y[-1]
+            prev_z = ax._z[-1]
+            
+            # 1. Distance parcourue depuis le dernier point (Pythagore en 2D)
+            step_distance = math.sqrt((dx - prev_x)**2 + (dy - prev_y)**2)
+            ax._distance_totale += step_distance
+            
+            # 2. Dénivelé positif
+            step_alt = dz - prev_z
+            if step_alt > 0:
+                ax._denivele_positif += step_alt
+            
+            if hasattr(ax, "_distance_totale"):
+                titre = f"Trajectoire GPS 3D | Distance : {ax._distance_totale:.0f}m | D+ : {ax._denivele_positif:.0f}m"
+                ax.set_title(titre)
+        
+        ax._x.append(dx)
+        ax._y.append(dy)
+        ax._z.append(dz)
+
+    if ax._scatter is not None:
+        ax._scatter.remove()
+    
+    chronologie = np.linspace(0, 1, len(ax._x))
+    ax._scatter = ax.scatter(ax._x, ax._y, ax._z, c=chronologie, cmap='winter', marker='o', s=15)
+    
+    # Ajustement des limites pour la 3D
+    if len(ax._x) > 0:
+        ax.set_xlim(min(ax._x)-2, max(ax._x)+2)
+        ax.set_ylim(min(ax._y)-2, max(ax._y)+2)
+        ax.set_zlim(min(ax._z)-2, max(ax._z)+2)
+    
+    ax._processed = len(positions)
+
+
+
+
+def plot_position_2D(ax: Axes, positions: list):
     if not positions:
         return
 
@@ -47,7 +139,7 @@ def plot_position(ax: Axes, positions: list):
         ax._lat0 = None
         ax._lon0 = None
         
-        ax.set_title("Trajectoire GPS (Repère métrique local)")
+        ax.set_title("Trajectoire GPS 2D")
         ax.set_xlabel("X (m)")
         ax.set_ylabel("Y (m)")
         ax.set_aspect('equal', adjustable='box')
@@ -80,6 +172,8 @@ def plot_position(ax: Axes, positions: list):
     ax.autoscale_view()
     
     ax._processed = len(positions)
+
+
 
 
 def plot_sat_histogramme(ax: Axes, sats: dict):
@@ -142,6 +236,8 @@ def plot_sat_histogramme(ax: Axes, sats: dict):
     ax._processed = len(timestamps)
 
 
+
+
 def plot_sat_geoide(ax, sats):
     data = sats.get("data", {})
     if not data:
@@ -156,6 +252,7 @@ def plot_sat_geoide(ax, sats):
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
         ax.set_rlim(90, 0)
+        ax.set_yticklabels([])
 
     has_new_data = False
     has_new_satellite = False
@@ -190,6 +287,10 @@ def plot_sat_geoide(ax, sats):
             ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
 
 
+
+denivele = 0
+distance = 0
+
 if __name__ == "__main__":
     trames = Queue()
 
@@ -203,14 +304,14 @@ if __name__ == "__main__":
     plt.ion()
 
     fig = plt.figure(figsize=(15, 5))
-    ax1 = fig.add_subplot(131)
+    ax1 = fig.add_subplot(131, projection="3d")
     ax2 = fig.add_subplot(132)
     ax3 = fig.add_subplot(133, projection="polar")
 
     plt.show()
 
     while True:
-        plot_position(ax1, parser.positions)
+        plot_position_3D(ax1, parser.positions)
         plot_sat_histogramme(ax2, parser.satellites)
         plot_sat_geoide(ax3, parser.satellites)
         
