@@ -84,14 +84,17 @@ class Parser:
         n = (len(fields) - 3) // 4
         for i in range(n):
             j = 3 + 4 * i
-            self.gsv_buffer.append(
-                Satellite(
-                    int(fields[j]),
-                    float(fields[j+1]),
-                    float(fields[j+2]),
-                    float(fields[j+3]) if fields[j+3] else 0.0
+            try:
+                self.gsv_buffer.append(
+                    Satellite(
+                        int(fields[j]),
+                        float(fields[j+1]),
+                        float(fields[j+2]),
+                        float(fields[j+3])
+                    )
                 )
-            )
+            except Exception:
+                print(f'Erreur dans la trame {fields}')
         
         if message_amount == message_number:
             self.satellites['timestamps'].append(datetime.now())

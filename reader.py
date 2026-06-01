@@ -4,6 +4,27 @@ from queue import Queue
 from threading import Thread
 from time import sleep
 import socket
+from pathlib import Path
+from os.path import exists
+
+class FileReader():
+    def __init__(self, out:Queue, path:Path):
+        self.out:Queue = out
+        if exists(path):
+            self.path = path
+        else:
+            while True:
+                if exists(path:=input('Chemin incorrect. Entrer le chemin : ')):
+                    self.path = path
+                    break
+        self.worker = Thread(target=self.job)            
+
+    def job(self):
+        with open(self.path, 'r') as f:
+            print(f"Reading {self.path}")
+            while True:
+                self.out.put(f.readline())
+
 
 class SerialReader():
     def __init__(self, out:Queue):
@@ -17,6 +38,7 @@ class SerialReader():
             try:
                 if len(ports) > 1:
                     self.ser = serial.Serial(input('Donnez le nom du port serial à utiliser : '), 4800, timeout=1)
+                    break
                 else:
                     self.ser = serial.Serial(ports[0][0], 4800, timeout=1)
                     break

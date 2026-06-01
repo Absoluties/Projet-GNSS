@@ -6,8 +6,9 @@ import matplotlib.dates as mdates
 from matplotlib.axes import Axes
 from time import sleep
 from datetime import datetime
+from sys import argv
 
-from reader import SerialReader, TcpReader
+from reader import SerialReader, TcpReader, FileReader
 from parser import Parser
 from math import radians, cos, sin
 
@@ -193,10 +194,12 @@ def plot_sat_geoide(ax, sats):
 if __name__ == "__main__":
     trames = Queue()
 
-    serial_reader = SerialReader(trames)
-    serial_reader.worker.start()
-    # tcp_reader = TcpReader(trames)
-    # tcp_reader.worker.start()
+    if len(argv) == 2:
+        reader = FileReader(trames, argv[1])
+    else:
+        reader = SerialReader(trames)
+    reader.worker.start()
+    
     parser = Parser(trames)
     parser.worker.start()
 
