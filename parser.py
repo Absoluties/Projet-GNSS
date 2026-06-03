@@ -30,6 +30,8 @@ class Parser:
             'data': {}
         }
         self.gsv_buffer:list[Satellite] = []
+        self.last_gga_time:datetime = None
+        self._rmc_date:date = None  # date extraite des trames RMC
 
         self.worker = Thread(target=self.job)
     
@@ -67,7 +69,9 @@ class Parser:
         return decimal
 
     def parse_gga(self, fields:list[str]): # position brute
-        time = datetime.combine(date.today(), datetime.strptime(fields[0], "%H%M%S.%f").time())
+        t = datetime.strptime(fields[0], "%H%M%S.%f").time()
+        d = self._rmc_date if self._rmc_date is not None else date.today()
+        time = datetime.combine(d, t)
         fix_quality:int = int(fields[5])
         lat = self.nmea_to_decimal(fields[1], fields[2])
         lon = self.nmea_to_decimal(fields[3], fields[4])
@@ -76,6 +80,7 @@ class Parser:
 
         if lat and lon:
             self.positions.append(Position(time, fix_quality, lat, lon, altitude, hdop))
+            self.last_gga_time = time
 
     def parse_gsv(self, fields:list[str]): # GSV = satellite visible
         message_amount:int = int(fields[0])
@@ -94,10 +99,12 @@ class Parser:
                     )
                 )
             except Exception:
-                print(f'Erreur dans la trame {fields}')
+                # print(f'Erreur dans la trame {fields}')
+                pass
         
         if message_amount == message_number:
-            self.satellites['timestamps'].append(datetime.now())
+            timestamp = self.last_gga_time if self.last_gga_time is not None else datetime.now()
+            self.satellites['timestamps'].append(timestamp)
             self.satellites['visibles'].append([sat.id for sat in self.gsv_buffer])
             for sat in self.gsv_buffer:
                 data = self.satellites['data']
@@ -106,20 +113,10 @@ class Parser:
                 data[sat.id].append(sat)
             self.gsv_buffer.clear()
 
-    # def parse_rmc(fields): # navigation
-    #     lat = nmea_to_decimal(fields[3], fields[4])
-    #     lon = nmea_to_decimal(fields[5], fields[6])
-    #
-    #     return {
-    #         "type": "RMC",
-    #         "time": fields[1],
-    #         "status": fields[2],
-    #         "latitude": lat,
-    #         "longitude": lon,
-    #         "speed_knots": fields[7],
-    #         "course_deg": fields[8],
-    #         "date": fields[9],
-    #     }
+    def parse_rmc(self, fields:list[str]):
+        if fields[1] != 'A':  # A = données valides, V = avertissement
+            return
+        self._rmc_date = datetime.strptime(fields[8], "%d%m%y").date()
 
     def job(self):
         while True:
@@ -139,11 +136,10 @@ class Parser:
         match type_trame:
             case "GGA":
                 self.parse_gga(fields[1:])
-            # case "RMC":
-            #     self.parse_rmc(fields[:1])
+            case "RMC":
+                self.parse_rmc(fields[1:])
             case "GSV":
                 self.parse_gsv(fields[1:])
             case _:
-                print(f"Type de trame non géré : {type_trame}")
-
-
+                # print(f"Type de trame non géré : {type_trame}")
+                pass

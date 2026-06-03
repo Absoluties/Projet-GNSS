@@ -22,8 +22,9 @@ class FileReader():
     def job(self):
         with open(self.path, 'r') as f:
             print(f"Reading {self.path}")
-            while True:
-                self.out.put(f.readline())
+            for line in f:
+                if line.strip():
+                    self.out.put(line)
 
 
 class SerialReader():
