@@ -2,6 +2,10 @@ from dataclasses import dataclass
 from queue import Queue
 from datetime import datetime, date
 from threading import Thread
+import numpy as np
+
+# Taille du bloc d'allocation. Quand le buffer est plein il est doublé (stratégie amortie).
+_INIT_CAPACITY = 65536
 
 @dataclass
 class Satellite:
@@ -10,136 +14,162 @@ class Satellite:
     azimuth:float
     snr:float
 
-@dataclass
-class Position:
-    time:datetime
-    fix_quality:int
-    lat:float
-    lon:float
-    altitude:float
-    hdop:float
-
 class Parser:
     def __init__(self, queue:Queue):
         self.queue = queue
 
-        self.positions:list = []
+        # --- Positions : arrays numpy pré-alloués ---
+        cap = _INIT_CAPACITY
+        self._pos_cap   = cap
+        self._pos_n     = 0          # nombre de points valides
+        self.pos_time   = np.empty(cap, dtype='datetime64[ms]')
+        self.pos_fix    = np.empty(cap, dtype=np.int8)
+        self.pos_lat    = np.empty(cap, dtype=np.float64)
+        self.pos_lon    = np.empty(cap, dtype=np.float64)
+        self.pos_alt    = np.empty(cap, dtype=np.float32)
+        self.pos_hdop   = np.empty(cap, dtype=np.float32)
+
+        # --- Satellites GSV ---
         self.satellites:dict = {
             'timestamps': [],
-            'visibles': [],
-            'data': {}
+            'visibles':   [],
+            'data':       {}
         }
-        self.gsv_buffer:list[Satellite] = []
-        self.last_gga_time:datetime = None
-        self._rmc_date:date = None  # date extraite des trames RMC
+        self.gsv_buffer = []
 
-        self.worker = Thread(target=self.job)
-    
+        # --- État interne ---
+        self.last_gga_time:datetime = None
+        self._rmc_date:date         = None
+
+        self.worker = Thread(target=self.job, daemon=True)
+
+    # ------------------------------------------------------------------ #
+    #  Propriété positions : vue en lecture seule sur les données valides  #
+    # ------------------------------------------------------------------ #
+    @property
+    def pos_count(self) -> int:
+        return self._pos_n
+
+    def _grow_pos(self):
+        """Double la capacité des arrays de positions."""
+        new_cap = self._pos_cap * 2
+        for attr, arr in [
+            ('pos_time',  self.pos_time),
+            ('pos_fix',   self.pos_fix),
+            ('pos_lat',   self.pos_lat),
+            ('pos_lon',   self.pos_lon),
+            ('pos_alt',   self.pos_alt),
+            ('pos_hdop',  self.pos_hdop),
+        ]:
+            new_arr = np.empty(new_cap, dtype=arr.dtype)
+            new_arr[:self._pos_cap] = arr
+            setattr(self, attr, new_arr)
+        self._pos_cap = new_cap
+
+    # ------------------------------------------------------------------ #
+    #  Checksum                                                            #
+    # ------------------------------------------------------------------ #
     def verify_checksum(self, sentence):
         sentence = sentence.strip()
-
         if not sentence.startswith("$") or "*" not in sentence:
             return False
-
-        data, received_checksum = sentence[1:].split("*")
-
-        checksum = 0
+        data, received = sentence[1:].split("*")
+        chk = 0
         for c in data:
-            checksum ^= ord(c)
+            chk ^= ord(c)
+        return f"{chk:02X}" == received.upper()
 
-        calculated = f"{checksum:02X}"
-        received = received_checksum.upper()
-
-        return calculated == received
-
+    # ------------------------------------------------------------------ #
+    #  NMEA → degrés décimaux                                             #
+    # ------------------------------------------------------------------ #
     def nmea_to_decimal(self, value, direction):
         if not value:
             return None
-
-        raw = float(value)
-
+        raw     = float(value)
         degrees = int(raw / 100)
-        minutes = raw - (degrees * 100)
-
-        decimal = degrees + minutes / 60
-
+        decimal = degrees + (raw - degrees * 100) / 60
         if direction in ("S", "W"):
             decimal *= -1
-
         return decimal
 
-    def parse_gga(self, fields:list[str]): # position brute
+    # ------------------------------------------------------------------ #
+    #  GGA                                                                 #
+    # ------------------------------------------------------------------ #
+    def parse_gga(self, fields):
         t = datetime.strptime(fields[0], "%H%M%S.%f").time()
         d = self._rmc_date if self._rmc_date is not None else date.today()
-        time = datetime.combine(d, t)
-        fix_quality:int = int(fields[5])
-        lat = self.nmea_to_decimal(fields[1], fields[2])
-        lon = self.nmea_to_decimal(fields[3], fields[4])
-        altitude = float(fields[8]) if fields[8] else 0.0
-        hdop = float(fields[7]) if fields[7] else 1
+        dt = datetime.combine(d, t)
+
+        fix_quality = int(fields[5])
+        lat  = self.nmea_to_decimal(fields[1], fields[2])
+        lon  = self.nmea_to_decimal(fields[3], fields[4])
+        alt  = float(fields[8]) if fields[8] else 0.0
+        hdop = float(fields[7]) if fields[7] else 1.0
 
         if lat and lon:
-            self.positions.append(Position(time, fix_quality, lat, lon, altitude, hdop))
-            self.last_gga_time = time
+            if self._pos_n >= self._pos_cap:
+                self._grow_pos()
+            i = self._pos_n
+            self.pos_time[i]  = np.datetime64(dt, 'ms')
+            self.pos_fix[i]   = fix_quality
+            self.pos_lat[i]   = lat
+            self.pos_lon[i]   = lon
+            self.pos_alt[i]   = alt
+            self.pos_hdop[i]  = hdop
+            self._pos_n      += 1
+            self.last_gga_time = dt
 
-    def parse_gsv(self, fields:list[str]): # GSV = satellite visible
-        message_amount:int = int(fields[0])
-        message_number:int = int(fields[1])
-        # satellites_amount:int = int(fields[2])
+    # ------------------------------------------------------------------ #
+    #  RMC                                                                 #
+    # ------------------------------------------------------------------ #
+    def parse_rmc(self, fields):
+        if fields[1] != 'A':
+            return
+        self._rmc_date = datetime.strptime(fields[8], "%d%m%y").date()
+
+    # ------------------------------------------------------------------ #
+    #  GSV                                                                 #
+    # ------------------------------------------------------------------ #
+    def parse_gsv(self, fields):
+        message_amount = int(fields[0])
+        message_number = int(fields[1])
         n = (len(fields) - 3) // 4
         for i in range(n):
             j = 3 + 4 * i
             try:
-                self.gsv_buffer.append(
-                    Satellite(
-                        int(fields[j]),
-                        float(fields[j+1]),
-                        float(fields[j+2]),
-                        float(fields[j+3])
-                    )
-                )
+                self.gsv_buffer.append(Satellite(
+                    int(fields[j]),
+                    float(fields[j+1]),
+                    float(fields[j+2]),
+                    float(fields[j+3])
+                ))
             except Exception:
-                # print(f'Erreur dans la trame {fields}')
                 pass
-        
+
         if message_amount == message_number:
-            timestamp = self.last_gga_time if self.last_gga_time is not None else datetime.now()
-            self.satellites['timestamps'].append(timestamp)
-            self.satellites['visibles'].append([sat.id for sat in self.gsv_buffer])
+            ts = self.last_gga_time if self.last_gga_time is not None else datetime.now()
+            self.satellites['timestamps'].append(ts)
+            self.satellites['visibles'].append([s.id for s in self.gsv_buffer])
             for sat in self.gsv_buffer:
-                data = self.satellites['data']
-                if sat.id not in data:
-                    data[sat.id] = []
-                data[sat.id].append(sat)
+                if sat.id not in self.satellites['data']:
+                    self.satellites['data'][sat.id] = []
+                self.satellites['data'][sat.id].append(sat)
             self.gsv_buffer.clear()
 
-    def parse_rmc(self, fields:list[str]):
-        if fields[1] != 'A':  # A = données valides, V = avertissement
-            return
-        self._rmc_date = datetime.strptime(fields[8], "%d%m%y").date()
-
+    # ------------------------------------------------------------------ #
+    #  Boucle principale                                                   #
+    # ------------------------------------------------------------------ #
     def job(self):
         while True:
             self.parse()
 
     def parse(self):
         trame = self.queue.get()
-
         if not self.verify_checksum(trame):
-            print('Invalid checksum.')
             return
-
-        body = trame[1:trame.index('*')]
+        body   = trame[1:trame.index('*')]
         fields = body.split(",")
-        type_trame = fields[0][-3:]
-
-        match type_trame:
-            case "GGA":
-                self.parse_gga(fields[1:])
-            case "RMC":
-                self.parse_rmc(fields[1:])
-            case "GSV":
-                self.parse_gsv(fields[1:])
-            case _:
-                # print(f"Type de trame non géré : {type_trame}")
-                pass
+        match fields[0][-3:]:
+            case "GGA": self.parse_gga(fields[1:])
+            case "RMC": self.parse_rmc(fields[1:])
+            case "GSV": self.parse_gsv(fields[1:])
