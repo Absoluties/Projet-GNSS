@@ -4,7 +4,6 @@ from datetime import datetime, date
 from threading import Thread
 import numpy as np
 
-# Taille du bloc d'allocation. Quand le buffer est plein il est doublé (stratégie amortie).
 _INIT_CAPACITY = 65536
 
 @dataclass
@@ -18,7 +17,6 @@ class Parser:
     def __init__(self, queue:Queue):
         self.queue = queue
 
-        # --- Positions : arrays numpy pré-alloués ---
         cap = _INIT_CAPACITY
         self._pos_cap   = cap
         self._pos_n     = 0          # nombre de points valides
@@ -29,7 +27,6 @@ class Parser:
         self.pos_alt    = np.empty(cap, dtype=np.float32)
         self.pos_hdop   = np.empty(cap, dtype=np.float32)
 
-        # --- Satellites GSV ---
         self.satellites:dict = {
             'timestamps': [],
             'visibles':   [],
@@ -37,21 +34,16 @@ class Parser:
         }
         self.gsv_buffer = []
 
-        # --- État interne ---
         self.last_gga_time:datetime = None
         self._rmc_date:date         = None
 
         self.worker = Thread(target=self.job, daemon=True)
 
-    # ------------------------------------------------------------------ #
-    #  Propriété positions : vue en lecture seule sur les données valides  #
-    # ------------------------------------------------------------------ #
     @property
     def pos_count(self) -> int:
         return self._pos_n
 
     def _grow_pos(self):
-        """Double la capacité des arrays de positions."""
         new_cap = self._pos_cap * 2
         for attr, arr in [
             ('pos_time',  self.pos_time),
@@ -66,9 +58,6 @@ class Parser:
             setattr(self, attr, new_arr)
         self._pos_cap = new_cap
 
-    # ------------------------------------------------------------------ #
-    #  Checksum                                                            #
-    # ------------------------------------------------------------------ #
     def verify_checksum(self, sentence):
         sentence = sentence.strip()
         if not sentence.startswith("$") or "*" not in sentence:
@@ -79,9 +68,6 @@ class Parser:
             chk ^= ord(c)
         return f"{chk:02X}" == received.upper()
 
-    # ------------------------------------------------------------------ #
-    #  NMEA → degrés décimaux                                             #
-    # ------------------------------------------------------------------ #
     def nmea_to_decimal(self, value, direction):
         if not value:
             return None
@@ -92,9 +78,6 @@ class Parser:
             decimal *= -1
         return decimal
 
-    # ------------------------------------------------------------------ #
-    #  GGA                                                                 #
-    # ------------------------------------------------------------------ #
     def parse_gga(self, fields):
         t = datetime.strptime(fields[0], "%H%M%S.%f").time()
         d = self._rmc_date if self._rmc_date is not None else date.today()
@@ -119,17 +102,11 @@ class Parser:
             self._pos_n      += 1
             self.last_gga_time = dt
 
-    # ------------------------------------------------------------------ #
-    #  RMC                                                                 #
-    # ------------------------------------------------------------------ #
     def parse_rmc(self, fields):
         if fields[1] != 'A':
             return
         self._rmc_date = datetime.strptime(fields[8], "%d%m%y").date()
 
-    # ------------------------------------------------------------------ #
-    #  GSV                                                                 #
-    # ------------------------------------------------------------------ #
     def parse_gsv(self, fields):
         message_amount = int(fields[0])
         message_number = int(fields[1])
@@ -156,9 +133,6 @@ class Parser:
                 self.satellites['data'][sat.id].append(sat)
             self.gsv_buffer.clear()
 
-    # ------------------------------------------------------------------ #
-    #  Boucle principale                                                   #
-    # ------------------------------------------------------------------ #
     def job(self):
         while True:
             self.parse()

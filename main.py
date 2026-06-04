@@ -20,9 +20,6 @@ def kill(sig, frame):
 signal.signal(signal.SIGINT, kill)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _make_hdop_segments(xs, ys, hdops, n=32):
     """Segments de tous les cercles HDOP, vectorisé. (N*n, 2, 2)"""
@@ -35,21 +32,18 @@ def _make_hdop_segments(xs, ys, hdops, n=32):
     return segs.reshape(-1, 2, 2)
 
 
-# ---------------------------------------------------------------------------
-# Trajectoire GPS
-# ---------------------------------------------------------------------------
-
 def init_position(ax: Axes, parser: Parser):
     ax._processed = 0
     ax._lat0 = None
     ax._lon0 = None
-    # Arrays numpy locaux (coordonnées métriques + hdop) — concaténation amortie
     ax._xs    = np.empty(0, dtype=np.float64)
     ax._ys    = np.empty(0, dtype=np.float64)
     ax._hdops = np.empty(0, dtype=np.float32)
-    # Stats de Welford
-    ax._n = 0; ax._mean_x = 0.0; ax._mean_y = 0.0
-    ax._M2_x = 0.0; ax._M2_y = 0.0
+    ax._n = 0
+    ax._mean_x = 0.0
+    ax._mean_y = 0.0
+    ax._M2_x = 0.0
+    ax._M2_y = 0.0
 
     ax.set_title("Trajectoire GPS (Repère métrique local)")
     ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
@@ -72,7 +66,6 @@ def plot_position(ax: Axes, parser: Parser):
     if n == 0 or n == ax._processed:
         return
 
-    # Slice direct sur les arrays numpy du parser — zéro copie
     new_lats  = parser.pos_lat [ax._processed:n]
     new_lons  = parser.pos_lon [ax._processed:n]
     new_hdops = parser.pos_hdop[ax._processed:n]
@@ -90,13 +83,16 @@ def plot_position(ax: Axes, parser: Parser):
     dxs  = np.round(R * ( cos(psi0) * cos_lat0 * dlon - sin(psi0) * dlat), 2)
     dys  = np.round(R * ( sin(psi0) * cos_lat0 * dlon + cos(psi0) * dlat), 2)
 
-    # Welford incrémental
+    # welford
     for x, y in zip(dxs, dys):
         ax._n += 1
-        dx = x - ax._mean_x; ax._mean_x += dx / ax._n; ax._M2_x += dx * (x - ax._mean_x)
-        dy = y - ax._mean_y; ax._mean_y += dy / ax._n; ax._M2_y += dy * (y - ax._mean_y)
+        dx = x - ax._mean_x
+        dy = y - ax._mean_y
+        ax._mean_x += dx / ax._n
+        ax._mean_y += dy / ax._n
+        ax._M2_x += dx * (x - ax._mean_x)
+        ax._M2_y += dy * (y - ax._mean_y)
 
-    # Concaténation amortie (numpy.append réalloue, mais seulement sur les nouveaux points)
     ax._xs    = np.concatenate([ax._xs,    dxs])
     ax._ys    = np.concatenate([ax._ys,    dys])
     ax._hdops = np.concatenate([ax._hdops, new_hdops])
@@ -116,10 +112,6 @@ def plot_position(ax: Axes, parser: Parser):
     ax.relim(); ax.autoscale_view()
     ax._processed = n
 
-
-# ---------------------------------------------------------------------------
-# Erreur horizontale HDOP
-# ---------------------------------------------------------------------------
 
 def init_hdop(ax: Axes):
     ax._processed = 0
@@ -155,10 +147,6 @@ def plot_hdop(ax: Axes, parser: Parser):
     plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
     ax._processed = n
 
-
-# ---------------------------------------------------------------------------
-# Visibilité satellites
-# ---------------------------------------------------------------------------
 
 def init_sat_histogramme(ax: Axes):
     ax._processed = 0
@@ -204,10 +192,6 @@ def plot_sat_histogramme(ax: Axes, sats: dict):
     ax._processed = len(timestamps)
 
 
-# ---------------------------------------------------------------------------
-# Skyplot
-# ---------------------------------------------------------------------------
-
 def init_sat_geoide(ax):
     ax._processed = {}
     ax._az  = {}
@@ -246,10 +230,6 @@ def plot_sat_geoide(ax, sats):
         if new_sat:
             ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     trames = Queue()
