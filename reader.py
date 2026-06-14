@@ -10,6 +10,7 @@ from os.path import exists
 class FileReader():
     def __init__(self, out:Queue, path:Path):
         self.out:Queue = out
+        self.finish = False
         if exists(path):
             self.path = path
         else:
@@ -25,11 +26,13 @@ class FileReader():
             for line in f:
                 if line.strip():
                     self.out.put(line)
+            self.finish = True
 
 
 class SerialReader():
     def __init__(self, out:Queue):
         self.out:Queue = out
+        self.finish = False
         ports = serial.tools.list_ports.comports()
         while not len(ports):
             self.ser = None
@@ -38,10 +41,10 @@ class SerialReader():
         while True:
             try:
                 if len(ports) > 1:
-                    self.ser = serial.Serial(input('Donnez le nom du port serial à utiliser : '), 4800, timeout=1)
+                    self.ser = serial.Serial(input('Donnez le nom du port serial à utiliser : '), 115200, timeout=1)
                     break
                 else:
-                    self.ser = serial.Serial(ports[0][0], 4800, timeout=1)
+                    self.ser = serial.Serial(ports[0][0], 115200, timeout=1)
                     break
             except Exception as e:
                 print(e)
@@ -59,6 +62,8 @@ class SerialReader():
             bytes = self.ser.readline()
             if bytes:
                 self.out.put(bytes.decode('ascii'))
+                with open(f'logs_{self.ser.name}.txt', '+a') as f:
+                    f.write(bytes.decode('ascii'))
         except:
             pass
 
@@ -66,6 +71,7 @@ class SerialReader():
 class TcpReader:
     def __init__(self, out: Queue, host="172.20.10.1", port=11000):
         self.out: Queue = out
+        self.finish = False
         self.host = host
         self.port = port
         self.worker = Thread(target=self.read_loop, daemon=True)

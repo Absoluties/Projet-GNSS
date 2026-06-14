@@ -19,7 +19,7 @@ class Parser:
 
         cap = _INIT_CAPACITY
         self._pos_cap   = cap
-        self._pos_n     = 0          # nombre de points valides
+        self.n     = 0          # nombre de points valides
         self.pos_time   = np.empty(cap, dtype='datetime64[ms]')
         self.pos_fix    = np.empty(cap, dtype=np.int8)
         self.pos_lat    = np.empty(cap, dtype=np.float64)
@@ -41,7 +41,7 @@ class Parser:
 
     @property
     def pos_count(self) -> int:
-        return self._pos_n
+        return self.n
 
     def _grow_pos(self):
         new_cap = self._pos_cap * 2
@@ -90,16 +90,16 @@ class Parser:
         hdop = float(fields[7]) if fields[7] else 1.0
 
         if lat and lon:
-            if self._pos_n >= self._pos_cap:
+            if self.n >= self._pos_cap:
                 self._grow_pos()
-            i = self._pos_n
+            i = self.n
             self.pos_time[i]  = np.datetime64(dt, 'ms')
             self.pos_fix[i]   = fix_quality
             self.pos_lat[i]   = lat
             self.pos_lon[i]   = lon
             self.pos_alt[i]   = alt
             self.pos_hdop[i]  = hdop
-            self._pos_n      += 1
+            self.n      += 1
             self.last_gga_time = dt
 
     def parse_rmc(self, fields):

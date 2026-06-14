@@ -6,7 +6,6 @@ import matplotlib.dates as mdates
 from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from time import sleep
-from datetime import datetime
 from sys import argv
 from math import radians, cos, sin
 
@@ -99,8 +98,8 @@ def plot_position(ax: Axes, parser: Parser):
 
     ax._line.set_data(ax._xs, ax._ys)
 
-    segs = _make_hdop_segments(ax._xs, ax._ys, ax._hdops)
-    ax._hdop_lc.set_segments(segs)
+    # segs = _make_hdop_segments(ax._xs, ax._ys, ax._hdops)
+    # ax._hdop_lc.set_segments(segs)
 
     ax._barycenter_point.set_data([ax._mean_x], [ax._mean_y])
     if ax._n > 1:
@@ -117,11 +116,18 @@ def init_hdop(ax: Axes):
     ax._processed = 0
     ax._times_num = np.empty(0, dtype=np.float64)
     ax._hdop_vals = np.empty(0, dtype=np.float32)
-    ax.set_title("Erreur horizontale (HDOP × 5 m)")
-    ax.set_xlabel("Temps"); ax.set_ylabel("Erreur estimée (m)")
+
+    ax.set_title("HDOP")
+    ax.set_xlabel("Temps")
+    ax.set_ylabel("HDOP")
     ax.grid()
+
     ax._line, = ax.plot([], [], 'b-', linewidth=1)
     ax._fill = None
+
+    locator = mdates.AutoDateLocator(maxticks=10)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
 
 
 def plot_hdop(ax: Axes, parser: Parser):
@@ -130,7 +136,7 @@ def plot_hdop(ax: Axes, parser: Parser):
         return
 
     new_times = parser.pos_time[ax._processed:n].astype('datetime64[ms]').astype(np.float64) / 86400000 + mdates.date2num(np.datetime64('1970-01-01'))
-    new_hdops = parser.pos_hdop[ax._processed:n].astype(np.float32) * 5.0
+    new_hdops = parser.pos_hdop[ax._processed:n].astype(np.float32)
 
     ax._times_num = np.concatenate([ax._times_num, new_times])
     ax._hdop_vals = np.concatenate([ax._hdop_vals, new_hdops])
@@ -233,36 +239,78 @@ def plot_sat_geoide(ax, sats):
 
 if __name__ == "__main__":
     trames = Queue()
-
-    plt.ion()
-    fig = plt.figure(figsize=(16, 10))
-    ax1 = fig.add_subplot(221)
-    ax2 = fig.add_subplot(222)
-    ax3 = fig.add_subplot(223, projection="polar")
-    ax4 = fig.add_subplot(224)
-    plt.tight_layout(pad=3.0)
-    plt.show()
-
     parser = Parser(trames)
 
-    init_position(ax1, parser)
-    init_sat_histogramme(ax2)
-    init_sat_geoide(ax3)
-    init_hdop(ax4)
-
-    if len(argv) == 2:
+    if '--noplot' not in argv:
+        plt.ion()
+        fig = plt.figure(figsize=(16, 10))
+        ax1 = fig.add_subplot(221)
+        ax2 = fig.add_subplot(222)
+        ax3 = fig.add_subplot(223, projection="polar")
+        ax4 = fig.add_subplot(224)
+   
+        plt.tight_layout(pad=3.0)
+        plt.show()
+        init_position(ax1, parser)
+        init_sat_histogramme(ax2)
+        init_sat_geoide(ax3)
+        init_hdop(ax4)
+        
+    if len(argv) > 1: 
         reader = FileReader(trames, argv[1])
     else:
         reader = SerialReader(trames)
     reader.worker.start()
     parser.worker.start()
 
-    while True:
-        plot_position(ax1, parser)
-        plot_sat_histogramme(ax2, parser.satellites)
-        plot_sat_geoide(ax3, parser.satellites)
-        plot_hdop(ax4, parser)
+    if '--noplot' not in argv:
+        last_run = True
+        while True:
+            plot_position(ax1, parser)
+            plot_sat_histogramme(ax2, parser.satellites)
+            plot_sat_geoide(ax3, parser.satellites)
+            plot_hdop(ax4, parser)
 
-        fig.canvas.draw_idle()
-        fig.canvas.flush_events()
-        sleep(0.1)
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+            
+            sleep(1)
+            
+            if reader.finish and trames.empty():
+                if last_run:
+                    last_run = False
+                else:
+                    break
+    
+        plt.ioff()
+        plt.show()
+    
+    while not reader.finish:
+        sleep(1)
+    
+    # Position géoréférencée
+    φ = +48.41901360  # lat
+    λ = -4.47345763  # lon
+    R = 6371000.0    # rayon Terre mètres
+
+    # Calcul diférence d'angle
+    dlat = (parser.pos_lat[:parser.n] - φ).reshape(-1, 1)
+    dlon = (parser.pos_lon[:parser.n] - λ).reshape(-1, 1)
+
+    # Conversion en différences de distance
+    dxs = R * dlon * cos(radians(φ))
+    dys = R * dlat
+
+    X = np.hstack((dxs, dys)) 
+
+    distances = np.linalg.norm(X, axis=1)
+    print(distances)
+
+    distances_mean = X.mean()
+    σ = np.std(X, axis=1)
+
+    print(f'Distance barycentre {distances_mean:.2f}m')
+    # print(f'Écart-type {σ:.2f}m')
+    
+    
+    
