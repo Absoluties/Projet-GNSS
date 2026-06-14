@@ -288,7 +288,7 @@ if __name__ == "__main__":
     while not (reader.finish and trames.empty()):
         sleep(1)
 
-    # Positions géoréférencées Lambert-93 (E,N,h)
+    # Positions géoréférencées Lambert-93 (E,N,H)
     bornes = (
         (147_865.270, 6_839_340.067, 88.90-1), # 2
         (147_789.012, 6_839_356.525, 88.85-1), # 3
