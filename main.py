@@ -1,5 +1,5 @@
 from os import _exit
-import signal
+from signal import signal, SIGINT
 from queue import Queue
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -8,7 +8,7 @@ from matplotlib.collections import LineCollection
 from time import sleep
 from sys import argv
 from math import radians, cos, sin
-
+from pyproj import Transformer
 import numpy as np
 
 from reader import SerialReader, TcpReader, FileReader
@@ -16,7 +16,7 @@ from parser import Parser
 
 def kill(sig, frame):
     _exit(1)
-signal.signal(signal.SIGINT, kill)
+signal(SIGINT, kill)
 
 
 
@@ -256,8 +256,8 @@ if __name__ == "__main__":
         init_sat_geoide(ax3)
         init_hdop(ax4)
         
-    if len(argv) > 1: 
-        reader = FileReader(trames, argv[1])
+    if '-f' in argv:
+        reader = FileReader(trames, argv[argv.index('-f')+1])
     else:
         reader = SerialReader(trames)
     reader.worker.start()
@@ -285,32 +285,49 @@ if __name__ == "__main__":
         plt.ioff()
         plt.show()
     
-    while not reader.finish:
+    while not (reader.finish and trames.empty()):
         sleep(1)
-    
-    # Position géoréférencée
-    φ = +48.41901360  # lat
-    λ = -4.47345763  # lon
-    R = 6371000.0    # rayon Terre mètres
 
-    # Calcul diférence d'angle
-    dlat = (parser.pos_lat[:parser.n] - φ).reshape(-1, 1)
-    dlon = (parser.pos_lon[:parser.n] - λ).reshape(-1, 1)
+    # Positions géoréférencées Lambert-93 (E,N,h)
+    bornes = (
+        (147_865.270, 6_839_340.067, 88.90-1), # 2
+        (147_789.012, 6_839_356.525, 88.85-1), # 3
+        (147_807.631, 6_839_347.831, 88.91-1) # 5
+    )
 
-    # Conversion en différences de distance
-    dxs = R * dlon * cos(radians(φ))
-    dys = R * dlat
+    transformer_latlon_EN    = Transformer.from_crs("EPSG:4326",  "EPSG:2154", always_xy=True)  # WGS84 → Lambert-93
 
-    X = np.hstack((dxs, dys)) 
+    xys = np.array(transformer_latlon_EN.transform(parser.pos_lon[:parser.n], parser.pos_lat[:parser.n]))
+    zs = np.array(parser.pos_alt[:parser.n])
 
-    distances = np.linalg.norm(X, axis=1)
-    print(distances)
+    def calcul_masque_filtre(donnees, seuil=3.0): # on utilise https://en.wikipedia.org/wiki/Median_absolute_deviation pour filtrer les valeurs aberrantes
+        mediane = np.median(donnees)
+        mad = np.median(np.abs(donnees - mediane))
+        if mad == 0:  # Évite la division par zéro si toutes les valeurs sont identiques
+            return np.ones(len(donnees), dtype=bool)
+        score_z = 0.6745 * (donnees - mediane) / mad
+        return np.abs(score_z) < seuil
 
-    distances_mean = X.mean()
-    σ = np.std(X, axis=1)
+    masque_x = calcul_masque_filtre(xys[0])
+    masque_y = calcul_masque_filtre(xys[1])
+    masque_z = calcul_masque_filtre(zs)
+    masque = masque_x & masque_y & masque_z
 
-    print(f'Distance barycentre {distances_mean:.2f}m')
-    # print(f'Écart-type {σ:.2f}m')
+    xys = xys[:, masque]
+    zs = zs[masque]
+
+    # horizontal
+    barycentre_xy = xys.mean(axis=1)
+    moyenne_z = zs.mean()
+    std_xy = xys.std(axis=1)
+    std_z = zs.std()
+    distances_bornes = [np.linalg.norm([barycentre_xy[0]-borne[0], barycentre_xy[1]-borne[1]]) for borne in bornes]
+    i = np.argmin(distances_bornes)
+    distance_borne = distances_bornes[i]
+    erreur_verticale_z = moyenne_z - bornes[i][2]
+
+    print(f'Distance horizontal borne : {distance_borne} m, Écart-type des mesures : {np.linalg.norm(std_xy)} m')
+    print(f'Distance vertical borne : {erreur_verticale_z} m, Écart-type des mesures : {100 * std_z} cm')
     
     
     
