@@ -1,0 +1,15 @@
+Borne 2 (Telephone)
+Distance horizontal borne : 1.5037739403444048 m, Écart-type des mesures : 0.4651997629307968 m
+Distance vertical borne : -5.9320068359375 m, Écart-type des mesures : 22.343914031982422 cm
+
+Borne 3 (Telephone)
+Distance horizontal borne : 1.8018773213338397 m, Écart-type des mesures : 0.5604127937907728 m
+Distance vertical borne : -0.18517303466796875 m, Écart-type des mesures : 60.76223373413086 cm
+
+Borne 5 (Telephone)
+Distance horizontal borne : 2.2288310516847227 m, Écart-type des mesures : 0.09620905157414472 m
+Distance vertical borne : 3.6682815551757812 m, Écart-type des mesures : 9.72757625579834 cm
+
+Borne 5 (Spectra)
+Distance horizontal borne : 0.008015970741576795 m, Écart-type des mesures : 0.0021254156696706482 m
+Distance vertical borne : 0.0108489990234375 m, Écart-type des mesures : 0.417444109916687 cm
