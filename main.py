@@ -31,7 +31,7 @@ def _make_hdop_segments(xs, ys, hdops, n=32):
     return segs.reshape(-1, 2, 2)
 
 
-def init_position(ax: Axes, parser: Parser):
+def init_position(ax: Axes, parser: Parser, bornes=None):
     ax._processed = 0
     ax._lat0 = None
     ax._lon0 = None
@@ -43,6 +43,9 @@ def init_position(ax: Axes, parser: Parser):
     ax._mean_y = 0.0
     ax._M2_x = 0.0
     ax._M2_y = 0.0
+    ax._bornes = bornes          # coordonnées Lambert-93 (E, N, H)
+    ax._bornes_local = None      # coordonnées dans le repère local (calculées à la 1ʳᵉ position)
+    ax._nearest_borne_idx = None # indice de la borne la plus proche du barycentre
 
     ax.set_title("Trajectoire GPS (Repère métrique local)")
     ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
@@ -54,10 +57,13 @@ def init_position(ax: Axes, parser: Parser):
     ax._barycenter_point, = ax.plot([], [], 'b+', markersize=10, markeredgewidth=2,
                                     label='Barycentre', zorder=5)
     ax._std_circle = plt.Circle((0, 0), 0, color='blue', fill=False,
-                                linestyle='--', linewidth=1.2, label='Écart-type', zorder=4)
+                                linestyle='--', linewidth=1.2, zorder=4)
     ax.add_patch(ax._std_circle)
     ax._std_circle.set_visible(False)
-    ax.legend(loc='upper left', fontsize=7)
+    # Borne la plus proche (carré noir)
+    ax._nearest_borne_plot, = ax.plot([], [], 'ks', markersize=10,
+                                      markeredgewidth=2, label='Borne la plus proche', zorder=7)
+    ax.legend(loc='best', ncol=1, fontsize=7, borderaxespad=0)
 
 
 def plot_position(ax: Axes, parser: Parser):
@@ -72,6 +78,19 @@ def plot_position(ax: Axes, parser: Parser):
     if ax._lat0 is None:
         ax._lat0 = float(new_lats[0])
         ax._lon0 = float(new_lons[0])
+        # Convertir les bornes Lambert-93 → repère métrique local dès que l'origine est connue
+        if ax._bornes:
+            transformer_EN_latlon = Transformer.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
+            R_c = 6371000.0; ps0 = radians(16)
+            clat0 = cos(radians(ax._lat0))
+            bxs, bys = [], []
+            for borne in ax._bornes:
+                blon, blat = transformer_EN_latlon.transform(borne[0], borne[1])
+                dl = radians(blat - ax._lat0)
+                dg = radians(blon  - ax._lon0)
+                bxs.append(round(R_c * ( cos(ps0) * clat0 * dg - sin(ps0) * dl), 2))
+                bys.append(round(R_c * ( sin(ps0) * clat0 * dg + cos(ps0) * dl), 2))
+            ax._bornes_local = (np.array(bxs), np.array(bys))
 
     R        = 6371000.0
     psi0     = radians(16)
@@ -107,6 +126,15 @@ def plot_position(ax: Axes, parser: Parser):
         ax._std_circle.set_center((ax._mean_x, ax._mean_y))
         ax._std_circle.set_radius(std)
         ax._std_circle.set_visible(True)
+
+    # Mettre à jour la borne la plus proche du barycentre courant
+    if ax._bornes_local is not None:
+        bxs, bys = ax._bornes_local
+        dists = np.hypot(bxs - ax._mean_x, bys - ax._mean_y)
+        idx = int(np.argmin(dists))
+        if idx != ax._nearest_borne_idx:
+            ax._nearest_borne_idx = idx
+        ax._nearest_borne_plot.set_data([bxs[idx]], [bys[idx]])
 
     ax.relim(); ax.autoscale_view()
     ax._processed = n
@@ -241,6 +269,14 @@ if __name__ == "__main__":
     trames = Queue()
     parser = Parser(trames)
 
+    # Positions géoréférencées Lambert-93 (E, N, H) — définies ici pour être
+    # disponibles à l'initialisation du graphe et en fin de traitement.
+    bornes = (
+        (147_865.270, 6_839_340.067, 88.90-1), # 2
+        (147_789.012, 6_839_356.525, 88.85-1), # 3
+        (147_807.631, 6_839_347.831, 88.91-1), # 5
+    )
+
     if '--noplot' not in argv:
         plt.ion()
         fig = plt.figure(figsize=(16, 10))
@@ -251,7 +287,7 @@ if __name__ == "__main__":
    
         plt.tight_layout(pad=3.0)
         plt.show()
-        init_position(ax1, parser)
+        init_position(ax1, parser, bornes=bornes)
         init_sat_histogramme(ax2)
         init_sat_geoide(ax3)
         init_hdop(ax4)
@@ -288,13 +324,6 @@ if __name__ == "__main__":
     while not (reader.finish and trames.empty()):
         sleep(1)
 
-    # Positions géoréférencées Lambert-93 (E,N,H)
-    bornes = (
-        (147_865.270, 6_839_340.067, 88.90-1), # 2
-        (147_789.012, 6_839_356.525, 88.85-1), # 3
-        (147_807.631, 6_839_347.831, 88.91-1) # 5
-    )
-
     transformer_latlon_EN    = Transformer.from_crs("EPSG:4326",  "EPSG:2154", always_xy=True)  # WGS84 → Lambert-93
 
     xys = np.array(transformer_latlon_EN.transform(parser.pos_lon[:parser.n], parser.pos_lat[:parser.n]))
@@ -328,6 +357,3 @@ if __name__ == "__main__":
 
     print(f'Distance horizontal borne : {distance_borne} m, Écart-type des mesures : {np.linalg.norm(std_xy)} m')
     print(f'Distance vertical borne : {erreur_verticale_z} m, Écart-type des mesures : {100 * std_z} cm')
-    
-    
-    

@@ -80,7 +80,9 @@ class Parser:
 
     def parse_gga(self, fields):
         t = datetime.strptime(fields[0], "%H%M%S.%f").time()
-        d = self._rmc_date if self._rmc_date is not None else date.today()
+        if self._rmc_date is None:
+            return
+        d = self._rmc_date
         dt = datetime.combine(d, t)
 
         fix_quality = int(fields[5])
@@ -124,13 +126,14 @@ class Parser:
                 pass
 
         if message_amount == message_number:
-            ts = self.last_gga_time if self.last_gga_time is not None else datetime.now()
-            self.satellites['timestamps'].append(ts)
-            self.satellites['visibles'].append([s.id for s in self.gsv_buffer])
-            for sat in self.gsv_buffer:
-                if sat.id not in self.satellites['data']:
-                    self.satellites['data'][sat.id] = []
-                self.satellites['data'][sat.id].append(sat)
+            if (ts:=self.last_gga_time) is not None:
+                print(ts)
+                self.satellites['timestamps'].append(ts)
+                self.satellites['visibles'].append([s.id for s in self.gsv_buffer])
+                for sat in self.gsv_buffer:
+                    if sat.id not in self.satellites['data']:
+                        self.satellites['data'][sat.id] = []
+                    self.satellites['data'][sat.id].append(sat)
             self.gsv_buffer.clear()
 
     def job(self):
