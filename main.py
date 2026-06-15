@@ -317,7 +317,7 @@ if __name__ == "__main__":
     
         plt.ioff()
         plt.show()
-    
+
     while not (reader.finish and trames.empty()):
         sleep(1)
 
@@ -352,5 +352,5 @@ if __name__ == "__main__":
     distance_borne = distances_bornes[i]
     erreur_verticale_z = moyenne_z - bornes[i][2]
 
-    print(f'Distance horizontal borne : {distance_borne} m, Écart-type des mesures : {np.linalg.norm(std_xy)} m')
+    print(f'Distance horizontal borne : {distance_borne} m, Écart-type des mesures : {100 * np.linalg.norm(std_xy)} cm')
     print(f'Distance vertical borne : {erreur_verticale_z} m, Écart-type des mesures : {100 * std_z} cm')
