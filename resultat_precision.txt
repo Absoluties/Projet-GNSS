@@ -11,7 +11,7 @@ Distance horizontal borne : 3.561168458535464 m, Écart-type des mesures : 15.48
 Distance vertical borne : 2.7024383544921875 m, Écart-type des mesures : 2.201812505722046 cm
 
 Borne 2 (GStar 3)
-Distance horizontal borne : 3.980042898891341 m, Écart-type des mesures : 10.751539751514351 m
+Distance horizontal borne : 3.980042898891341 m, Écart-type des mesures : 10.751539751514351 cm
 Distance vertical borne : 2.3446044921875 m, Écart-type des mesures : 10.492081642150879 cm
 
 Borne 3 (Telephone)
