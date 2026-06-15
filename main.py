@@ -301,7 +301,10 @@ if __name__ == "__main__":
 
     if '--noplot' not in argv:
         last_run = True
-        while True:
+        while last_run:
+            if reader.finish and trames.empty():
+                last_run = False
+
             plot_position(ax1, parser)
             plot_sat_histogramme(ax2, parser.satellites)
             plot_sat_geoide(ax3, parser.satellites)
@@ -311,12 +314,6 @@ if __name__ == "__main__":
             fig.canvas.flush_events()
             
             sleep(1)
-            
-            if reader.finish and trames.empty():
-                if last_run:
-                    last_run = False
-                else:
-                    break
     
         plt.ioff()
         plt.show()

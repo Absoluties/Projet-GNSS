@@ -127,7 +127,6 @@ class Parser:
 
         if message_amount == message_number:
             if (ts:=self.last_gga_time) is not None:
-                print(ts)
                 self.satellites['timestamps'].append(ts)
                 self.satellites['visibles'].append([s.id for s in self.gsv_buffer])
                 for sat in self.gsv_buffer:
