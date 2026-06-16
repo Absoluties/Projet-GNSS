@@ -140,6 +140,206 @@ def plot_position(ax: Axes, parser: Parser):
     ax._processed = n
 
 
+def init_position_suivi(ax: Axes, parser: Parser):
+    ax._processed = 0
+    ax._lat0 = None
+    ax._lon0 = None
+    ax._xs = np.empty(0, dtype=np.float64)
+    ax._ys = np.empty(0, dtype=np.float64)
+
+    ax.set_title("Trajectoire GPS")
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    
+    ax.set_aspect('equal', adjustable='box')
+    ax.grid(True, linestyle=':', alpha=0.5)
+    ax.locator_params(axis='both', nbins=6)
+    
+    cmap = LinearSegmentedColormap.from_list("blue_green", ["dodgerblue", "lightseagreen"])
+    norm = Normalize(vmin=0, vmax=1)
+
+    ax._gradient_lc = LineCollection([], cmap=cmap, norm=norm, linewidths=2, zorder=3)
+    ax.add_collection(ax._gradient_lc)
+
+    cbar = ax.figure.colorbar(ax._gradient_lc, ax=ax, fraction=0.046, pad=0.04)
+    
+    # On force uniquement deux graduations aux extrémités
+    cbar.set_ticks([0, 1])
+    cbar.set_ticklabels([r'$t_i$', r'$t_f$'])
+    
+    cbar.outline.set_edgecolor('white')
+    cbar.ax.yaxis.set_tick_params(colors='white')
+
+
+def plot_position_suivi(ax: Axes, parser: Parser):
+    """Met à jour le graphique avec la trajectoire en dégradé de couleur."""
+    n = parser.pos_count
+    if n == 0 or n == ax._processed:
+        return
+
+    new_lats = parser.pos_lat[ax._processed:n]
+    new_lons = parser.pos_lon[ax._processed:n]
+
+    if ax._lat0 is None:
+        ax._lat0 = float(new_lats[0])
+        ax._lon0 = float(new_lons[0])
+
+    R = 6371000.0
+    psi0 = radians(270)
+    cos_lat0 = cos(radians(ax._lat0))
+
+    dlat = np.radians(new_lats - ax._lat0)
+    dlon = np.radians(new_lons - ax._lon0)
+    
+    dxs = np.round(R * (cos(psi0) * cos_lat0 * dlon - sin(psi0) * dlat), 2)
+    dys = np.round(R * (sin(psi0) * cos_lat0 * dlon + cos(psi0) * dlat), 2)
+
+    ax._xs = np.concatenate([ax._xs, dxs])
+    ax._ys = np.concatenate([ax._ys, dys])
+
+    # Mise à jour de la ligne avec le dégradé
+    if len(ax._xs) > 1:
+        # Création des segments liant les points
+        points = np.array([ax._xs, ax._ys]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        ax._gradient_lc.set_segments(segments)
+
+        # On applique un tableau de valeurs allant de 0 (bleu, point le plus vieux) à 1 (vert, point le plus récent)
+        ax._gradient_lc.set_array(np.linspace(0, 1, len(segments)))
+
+    # Maintien dynamique de la vue
+    if len(ax._xs) > 0:
+        min_x_m = np.min(ax._xs) - 2.0
+        max_x_m = np.max(ax._xs) + 2.0
+        min_y_m = np.min(ax._ys) - 2.0
+        max_y_m = np.max(ax._ys) + 2.0
+
+        width = max_x_m - min_x_m
+        height = max_y_m - min_y_m
+        span = max(width, height)
+        
+        if span == 0:
+            span = 4.0
+
+        center_x = (min_x_m + max_x_m) / 2
+        center_y = (min_y_m + max_y_m) / 2
+
+        ax.set_xlim(center_x - span / 2, center_x + span / 2)
+        ax.set_ylim(center_y - span / 2, center_y + span / 2)
+
+    ax._processed = n
+
+
+def init_donnees_parcours():
+    """
+    Initialise et retourne un dictionnaire contenant l'état des grandeurs physiques.
+    Plus besoin de passer un objet graphique (ax) en paramètre.
+    """
+    return {
+        "processed": 0,
+        "distance_totale": 0.0,
+        "denivele_positif": 0.0,
+        "denivele_negatif": 0.0,
+        "temps_ecoule": 0.0,
+        "vitesse": 0.0,
+        "vitesse_max": 0.0,
+        "last_lat": None,
+        "last_lon": None,
+        "last_alt": None,
+        "last_time": None,
+        "start_time": None
+    }
+
+
+def donnees_parcours(etat: dict, parser: Parser):
+    """
+    Calcule l'évolution des grandeurs depuis le dernier appel.
+    Retourne la distance, le temps (en secondes), le D+ et le D-.
+    """
+    n = parser.pos_count
+    
+    # S'il n'y a pas de nouveaux points, on retourne les valeurs actuelles
+    if n == 0 or n == etat["processed"]:
+        return etat["temps_ecoule"], etat["vitesse"], etat["vitesse_max"], etat["distance_totale"], etat["denivele_positif"], etat["denivele_negatif"]
+
+    # Extraction des nouvelles données
+    new_lats = parser.pos_lat[etat["processed"]:n]
+    new_lons = parser.pos_lon[etat["processed"]:n]
+    new_alts = parser.pos_alt[etat["processed"]:n]
+    new_times = parser.pos_time[etat["processed"]:n]
+
+    R = 6371000.0 # Rayon de la Terre
+
+    # On itère sur chaque nouveau point reçu pour calculer le différentiel pas à pas
+    for i in range(len(new_lats)):
+        lat = float(new_lats[i])
+        lon = float(new_lons[i])
+        alt = float(new_alts[i])
+        t = new_times[i]
+
+        # Initialisation lors de la réception du tout premier point
+        if etat["last_lat"] is None:
+            etat["start_time"] = t
+        else:
+            # 1. Calcul de la distance entre le point (i-1) et le point (i)
+            dlat = np.radians(lat - etat["last_lat"])
+            dlon = np.radians(lon - etat["last_lon"])
+            mean_lat = np.radians((lat + etat["last_lat"]) / 2.0)
+            
+            # Approximation locale (équirectangulaire) plus performante que Haversine
+            dx = R * dlon * cos(mean_lat)
+            dy = R * dlat
+            dist_step = np.sqrt(dx**2 + dy**2)
+            etat["distance_totale"] += dist_step
+            
+            # Calcul du dt
+            try:
+                # Si format numpy.datetime64
+                dt_td = t - etat["last_time"]
+                dt_sec = dt_td / np.timedelta64(1, 's')
+            except TypeError:
+                # Si format datetime classique
+                dt_td = t - etat["last_time"]
+                dt_sec = dt_td.total_seconds()
+            
+            if dt_sec > 0:
+                vitesse = dist_step / dt_sec
+                etat["vitesse"] = vitesse * 3.6
+            else:
+                etat["vitesse"] = 0.0
+                
+            if vitesse > etat["vitesse_max"]:
+                etat["vitesse_max"] = vitesse * 3.6
+
+            # 2. Calcul du dénivelé entre (i-1) et (i)
+            dalt = alt - etat["last_alt"]
+            if dalt > 0:
+                etat["denivele_positif"] += dalt
+            elif dalt < 0:
+                etat["denivele_negatif"] += abs(dalt)
+
+        etat["last_lat"] = lat
+        etat["last_lon"] = lon
+        etat["last_alt"] = alt
+        etat["last_time"] = t
+        
+    # 3. Calcul du temps total écoulé (Dernier point reçu - Premier point reçu)
+    if etat["start_time"] is not None:
+        last_t = new_times[-1]
+        try:
+            # Si parser.pos_time stocke des numpy.datetime64 (le standard souvent utilisé)
+            dt = last_t - etat["start_time"]
+            etat["temps_ecoule"] = dt / np.timedelta64(1, 's')
+        except TypeError:
+            # Si ce sont des objets datetime.datetime natifs de Python
+            dt = last_t - etat["start_time"]
+            etat["temps_ecoule"] = dt.total_seconds()
+
+    etat["processed"] = n
+
+    return etat["temps_ecoule"], etat["vitesse"], etat["vitesse_max"], etat["distance_totale"], etat["denivele_positif"], etat["denivele_negatif"]
+
+
 def init_hdop(ax: Axes):
     ax._processed = 0
     ax._times_num = np.empty(0, dtype=np.float64)
